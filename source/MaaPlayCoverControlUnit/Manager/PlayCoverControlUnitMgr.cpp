@@ -1,5 +1,8 @@
 #include "PlayCoverControlUnitMgr.h"
 
+#include <chrono>
+#include <thread>
+
 #include "MaaUtils/Logger.h"
 #include "MaaUtils/NoWarningCV.hpp"
 
@@ -55,7 +58,35 @@ MaaControllerFeature PlayCoverControlUnitMgr::get_features() const
 
 bool PlayCoverControlUnitMgr::start_app(const std::string& intent)
 {
-    return MacOSAppLifecycle::start_app(intent, "~/Library/Containers/io.playcover.PlayCover/Applications");
+    if (!client_) {
+        LogError << "client_ is nullptr";
+        return false;
+    }
+
+    LogFunc << VAR(intent) << VAR(address_);
+
+    // Drop any stale PlayTools socket before (re)launching the app.
+    client_->close();
+
+    if (!MacOSAppLifecycle::start_app(intent, "~/Library/Containers/io.playcover.PlayCover/Applications")) {
+        return false;
+    }
+
+    // PlayTools needs time to come up after launch; rebuild the handshake before returning.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+    while (true) {
+        if (client_->connect(address_)) {
+            return true;
+        }
+        client_->close();
+        if (std::chrono::steady_clock::now() >= deadline) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+
+    LogError << "Timed out waiting for PlayTools after start_app" << VAR(intent) << VAR(address_);
+    return false;
 }
 
 bool PlayCoverControlUnitMgr::stop_app(const std::string& intent)
@@ -67,7 +98,11 @@ bool PlayCoverControlUnitMgr::stop_app(const std::string& intent)
 
     LogInfo << "stop_app" << VAR(intent);
     std::ignore = intent;
-    return client_->terminate();
+    const bool stopped = client_->terminate();
+    // TERM leaves the TCP socket open; close it so the next start_app reconnects instead of
+    // treating the dead connection as still connected.
+    client_->close();
+    return stopped;
 }
 
 bool PlayCoverControlUnitMgr::screencap(cv::Mat& image)

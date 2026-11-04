@@ -76,8 +76,11 @@ bool start_app(const std::string& intent, const std::string& search_path)
         };
         // The completion handler may outlive this call on the main thread or after a timeout.
         const auto result = std::make_shared<LaunchResult>();
+        NSWorkspaceOpenConfiguration* configuration = [NSWorkspaceOpenConfiguration configuration];
+        // Avoid reusing another running instance with the same bundle ID at a different path.
+        configuration.allowsRunningApplicationSubstitution = NO;
         [[NSWorkspace sharedWorkspace] openApplicationAtURL:url
-                                              configuration:[NSWorkspaceOpenConfiguration configuration]
+                                              configuration:configuration
                                           completionHandler:^(NSRunningApplication* app, NSError* error) {
                                               result->started = app != nil;
                                               if (error) {
